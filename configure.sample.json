@@ -1,0 +1,12 @@
+{
+  "vlc_cocoapods_prod_url": "https://download.videolan.org/pub/cocoapods/prod/",
+  "github_file_store_url":"github release path",
+  "github_tag_url":"",
+  "github_token",:"github access token",
+  "github_repo_name": "",
+  "github_owner_name": "",
+  "github_release_name": "",
+  "github_branch_name": "master",
+  "temp_path":"temp",
+  "github_release_id":""
+}
