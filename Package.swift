@@ -14,8 +14,8 @@ let package = Package(
     targets: [
         .binaryTarget(
             name: "MobileVLCKit",
-            url:"https://github.com/MobileVLCKit-SPM/MobileVLCKit-SPM/releases/download/FileStorage/MobileVLCKit-3.3.5.xcframework.zip",
-            checksum:"1ab40bb5dd93876272ebab90258977f002008840091b3bac0b284d4396775738"
+            url:"https://github.com/MobileVLCKit-SPM/MobileVLCKit-SPM/releases/download/FileStorage/MobileVLCKit-3.3.6.xcframework.zip",
+            checksum:"469fb891bbb683fac459f9a27b9834c28c680142e4c430041fd6950ebbd2031e"
         ),
         .target(
             name: "MobileVLCKitSampleViewController",
