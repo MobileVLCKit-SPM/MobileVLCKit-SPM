@@ -13,7 +13,7 @@ from urllib.parse import urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
-from github import Github, GitRelease, GitReleaseAsset, Repository
+from github import Github, GitRelease, GitReleaseAsset, Repository, PaginatedList, Tag
 
 from Shell import Shell
 
@@ -89,10 +89,40 @@ def get_mobile_vlc_kit_links(href: str) -> dict[str, str]:
     return analyse_tags_links(text, href, regexp)
 
 
-def get_mobile_vlc_kit_tags(href: str) -> dict[str, str]:
-    text: str = requests.get(href).text
-    regexp = re.compile(r'(/MobileVLCKit-SPM/MobileVLCKit-SPM/releases/tag/(\d+\.\d+\.\d+))')
-    return analyse_tags_links(text, href, regexp)
+def get_mobile_vlc_kit_releases_assets(config: Configure, github: typing.Optional[Github],
+                                       repo: typing.Optional[Repository.Repository],
+                                       release: typing.Optional[GitRelease.GitRelease]) -> (
+        dict[str, str], typing.Optional[Github], typing.Optional[Repository.Repository],
+        typing.Optional[GitRelease.GitRelease]):
+    github, repo, release = setup_github_if_need(github, repo, release, config)
+    result: dict[str, str] = dict()
+    regexp = re.compile(r'MobileVLCKit-(\d+\.\d+\.\d+)\.xcframework\.zip')
+    assets: PaginatedList.PaginatedList = release.get_assets()
+    for idx in range(0, assets.totalCount):
+        asset: GitReleaseAsset.GitReleaseAsset = assets[idx]
+        # asset.browser_download_url
+        name = asset.name
+        if name is not None:
+            reg_result: list = regexp.findall(name)
+            if reg_result is not None and len(reg_result) > 0:
+                version = reg_result[0]
+                result[version] = asset.browser_download_url
+        else:
+            print(f'name=>{name}')
+    return result, github, repo, release
+
+
+def get_mobile_vlc_kit_tags(config: Configure, github: typing.Optional[Github],
+                            repo: typing.Optional[Repository.Repository]) -> (
+        dict[str, str], typing.Optional[Github], typing.Optional[Repository.Repository]):
+    github, repo, _ = setup_github_if_need(github, repo, None, config)
+    tags: PaginatedList.PaginatedList = repo.get_tags()
+    result: dict[str, str] = dict()
+    for idx in range(0, tags.totalCount):
+        tag: Tag.Tag = tags[idx]
+        version = tag.name
+        result[version] = tag.zipball_url
+    return result, github, repo
 
 
 def mkdirs(path: str):
@@ -648,20 +678,21 @@ def get_release_hash(url: str, configure: Configure) -> str:
 
 def do_main():
     configure = Configure()
+    github: typing.Optional[Github] = None
+    git_release: typing.Optional[GitRelease.GitRelease] = None
+    git_repo: typing.Optional[Repository.Repository] = None
+
+    github_file_links, github, git_repo, git_release = get_mobile_vlc_kit_releases_assets(configure, github, git_repo,
+                                                                                          git_release)
+    github_tags, github, git_repo = get_mobile_vlc_kit_tags(configure, github, git_repo)
 
     vlc_links: dict[str, str] = get_mobile_vlc_kit_links(configure.vlc_cocoapods_prod_url)
-    github_file_links: dict[str, str] = get_mobile_vlc_kit_links(configure.github_file_store_url)
-    github_tags: dict[str, str] = get_mobile_vlc_kit_tags(configure.github_tag_url)
-
     convert_list: dict[str, str] = dict()
     for version in vlc_links.keys():
         href = vlc_links[version]
         if version not in github_tags:
             convert_list[version] = href
 
-    github: typing.Optional[Github] = None
-    git_release: typing.Optional[GitRelease.GitRelease] = None
-    git_repo: typing.Optional[Repository.Repository] = None
     for version in convert_list.keys():
         long_version = version_to_long(version)
         need_framewrok_convert = False

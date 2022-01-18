@@ -1,1 +1,5 @@
 *.zip
+.idea
+__pycache__
+temp
+configure.json
