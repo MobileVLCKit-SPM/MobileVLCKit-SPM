@@ -666,7 +666,7 @@ def do_main():
         long_version = version_to_long(version)
         need_framewrok_convert = False
         if long_version <= 2007009:
-		continue
+            continue
         if long_version < 3003016:
             need_framewrok_convert = True
 
