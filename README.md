@@ -14,3 +14,4 @@ xcode project ：
 add package :
 https://github.com/MobileVLCKit-SPM/MobileVLCKit-SPM
 
+download mobilevlc framework from : https://download.videolan.org/pub/cocoapods/prod
