@@ -23,8 +23,18 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "env=>$(env)"
-          echo "pwd=>$(pwd)"
-          echo "ls -lah $(ls -lah)"
+          echo "================================================="
+          echo "env"
+          env
+          echo "================================================="
+          echo "pwd"
+          pwd
+          echo "================================================="
+          echo "ls -lah"
+          ls -lah
+          echo "================================================="
+          echo "ls -lah /Users/runner/work/MobileVLCKit-SPM"
+          ls -lah /Users/runner/work/MobileVLCKit-SPM/
+          echo "================================================="
           pip install requests beautifulsoup4 PyGithub
-          python CocoapodConvert.py
+          python /Users/runner/work/MobileVLCKit-SPM/CocoapodConvert.py
