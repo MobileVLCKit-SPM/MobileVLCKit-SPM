@@ -1,0 +1,27 @@
+name: "Check And Build MobileVLC xcframework"
+
+on:
+  push:
+    branches: ["main"]
+  schedule:
+    - cron: "18 18 * * *"
+  workflow_dispatch:
+
+permissions:
+  packages: read
+  contents: write
+
+jobs:
+  query:
+    name: "Check for updates"
+    runs-on: macos-15
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: "Get latest release"
+        id: query
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          pip install requests beautifulsoup4 PyGithub
+          python CocoapodConvert.py

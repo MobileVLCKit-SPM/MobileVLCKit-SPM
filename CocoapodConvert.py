@@ -10,14 +10,34 @@ import traceback
 import typing
 import zipfile
 from urllib.parse import urljoin, urlparse
-
+from typing import Optional, Tuple, Union
 import requests
 from bs4 import BeautifulSoup
 from github import Github, GitRelease, GitReleaseAsset, Repository, PaginatedList, Tag
 
 from Shell import Shell
+import logging
+import functools
+
+# 配置日志
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
 
 
+def log_entry(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        logger.info(f"Entering {func.__name__} with args={args}, kwargs={kwargs}")
+        result = func(*args, **kwargs)
+        logger.info(f"Exiting {func.__name__}")
+        return result
+
+    return wrapper
+
+
+@log_entry
 def json_load_str_safe(obj: dict, key: str, default_value: str) -> str:
     if key in obj:
         return obj[key]
@@ -26,31 +46,54 @@ def json_load_str_safe(obj: dict, key: str, default_value: str) -> str:
 
 
 class Configure:
+    # def __init__(self):
+    #     cfg_path = os.path.join(os.path.dirname(__file__), "configure.json")
+    #     self.vlc_cocoapods_prod_url = "https://download.videolan.org/pub/cocoapods/prod/"
+    #     self.github_file_store_url = ""
+    #     self.github_tag_url = ""
+    #     self.github_token = ""
+    #     self.github_repo_name = ""
+    #     self.github_owner_name = ""
+    #     self.github_release_id = ""
+    #     self.github_release_name = ""
+    #     self.temp_path = "./temp"
+    #     self.github_branch_name = "master"
+    #     self.lipo_path = "lipo"
+    #     self.cache_file_keep = "False"
+    #     with open(cfg_path) as fp:
+    #         self.cfg_json = json.load(fp)
+    #     self.load_attributes()
+    #     self.temp_path = os.path.abspath(self.temp_path)
+    #     self.cache_file_keep = self.cache_file_keep.lower().strip() == "true"
     def __init__(self):
-        cfg_path = os.path.join(os.path.dirname(__file__), "configure.json")
-        self.vlc_cocoapods_prod_url = "https://download.videolan.org/pub/cocoapods/prod/"
-        self.github_file_store_url = ""
-        self.github_tag_url = ""
-        self.github_token = ""
-        self.github_repo_name = ""
-        self.github_owner_name = ""
+        self.vlc_cocoapods_prod_url = os.environ.get(
+            "VLC_COCOAPODS_URL", "https://download.videolan.org/pub/cocoapods/prod/"
+        )
+        self.github_token = os.environ.get("GH_TOKEN")
+        github_repository = os.environ.get("GITHUB_REPOSITORY")
+        if github_repository:
+            repo_parts = github_repository.split("/")
+            self.github_owner_name = repo_parts[0]
+            self.github_repo_name = repo_parts[1]
+        else:
+            self.github_owner_name = ""
+            self.github_repo_name = ""
         self.github_release_id = ""
-        self.github_release_name = ""
-        self.temp_path = "./temp"
-        self.github_branch_name = "master"
-        self.lipo_path = "lipo"
-        self.cache_file_keep = "False"
-        with open(cfg_path) as fp:
-            self.cfg_json = json.load(fp)
-        self.load_attributes()
-        self.temp_path = os.path.abspath(self.temp_path)
-        self.cache_file_keep = self.cache_file_keep.lower().strip() == "true"
+        self.github_release_name = "FileStorage"
+        self.temp_path = os.environ.get("TEMP_PATH", "./temp")
+        self.github_branch_name = os.environ.get("GITHUB_BRANCH", "master")
+        self.lipo_path = os.environ.get("LIPO_PATH", "lipo")
+        self.cache_file_keep = os.environ.get("CACHE_FILE_KEEP", "False")
 
     def load_attributes(self):
         attributes = inspect.getmembers(self, lambda a: not (inspect.isroutine(a)))
         for attribute in attributes:
-            if len(attribute) == 2 and isinstance(attribute[0], str) and not attribute[0].startswith(
-                    "__") and isinstance(attribute[1], str):
+            if (
+                len(attribute) == 2
+                and isinstance(attribute[0], str)
+                and not attribute[0].startswith("__")
+                and isinstance(attribute[1], str)
+            ):
                 self.load_attribute(attribute[0])
 
     def load_attribute(self, property_name: str):
@@ -60,6 +103,7 @@ class Configure:
                 setattr(self, property_name, value)
 
 
+@log_entry
 def full_href(base: str, path: str) -> str:
     if path.startswith("http://") or path.startswith("https://"):
         return path
@@ -67,36 +111,50 @@ def full_href(base: str, path: str) -> str:
         return urljoin(base, path)
 
 
-def analyse_tags_links(html: str, base_url: str, regexp: re) -> dict[str, str]:
+@log_entry
+def analyse_tags_links(
+    html: str, base_url: str, regexp: re.Pattern[str]
+) -> dict[str, str]:
+
     links: dict[str, str] = dict()
-    soup = BeautifulSoup(html, 'html.parser')
-    tags = soup.find_all('a')
+    soup = BeautifulSoup(html, "html.parser")
+    tags = soup.find_all("a")
     for link in tags:
-        href: str = link.get('href')
+        href: str = f"{link.get("href")}"
         result: list = regexp.findall(href)
         if len(result) > 0:
             # full_name = result[0][0]
             version = result[0][1]
             href = full_href(base_url, href)
-            print(f'full->{href}')
+            print(f"full->{href}")
             links[version] = href
     return links
 
 
+@log_entry
 def get_mobile_vlc_kit_links(href: str) -> dict[str, str]:
     text: str = requests.get(href).text
-    regexp = re.compile(r'(MobileVLCKit-(\d+\.\d+\.\d+)([^\w]([\d\w\-])*){0,1}\.((tar.xz)|(zip)))')
+    regexp = re.compile(
+        r"(MobileVLCKit-(\d+\.\d+\.\d+)([^\w]([\d\w\-])*){0,1}\.((tar.xz)|(zip)))"
+    )
     return analyse_tags_links(text, href, regexp)
 
 
-def get_mobile_vlc_kit_releases_assets(config: Configure, github: typing.Optional[Github],
-                                       repo: typing.Optional[Repository.Repository],
-                                       release: typing.Optional[GitRelease.GitRelease]) -> (
-        dict[str, str], typing.Optional[Github], typing.Optional[Repository.Repository],
-        typing.Optional[GitRelease.GitRelease]):
+@log_entry
+def get_mobile_vlc_kit_releases_assets(
+    config: Configure,
+    github: Optional[Github],
+    repo: Optional[Repository.Repository],
+    release: Optional[GitRelease.GitRelease],
+) -> tuple[
+    dict[str, str],
+    Optional[Github],
+    Optional[Repository.Repository],
+    Optional[GitRelease.GitRelease],
+]:
     github, repo, release = setup_github_if_need(github, repo, release, config)
     result: dict[str, str] = dict()
-    regexp = re.compile(r'MobileVLCKit-(\d+\.\d+\.\d+)\.xcframework\.zip')
+    regexp = re.compile(r"MobileVLCKit-(\d+\.\d+\.\d+)\.xcframework\.zip")
     assets: PaginatedList.PaginatedList = release.get_assets()
     for idx in range(0, assets.totalCount):
         asset: GitReleaseAsset.GitReleaseAsset = assets[idx]
@@ -108,13 +166,16 @@ def get_mobile_vlc_kit_releases_assets(config: Configure, github: typing.Optiona
                 version = reg_result[0]
                 result[version] = asset.browser_download_url
         else:
-            print(f'name=>{name}')
+            print(f"name=>{name}")
     return result, github, repo, release
 
 
-def get_mobile_vlc_kit_tags(config: Configure, github: typing.Optional[Github],
-                            repo: typing.Optional[Repository.Repository]) -> (
-        dict[str, str], typing.Optional[Github], typing.Optional[Repository.Repository]):
+@log_entry
+def get_mobile_vlc_kit_tags(
+    config: Configure,
+    github: Optional[Github],
+    repo: Optional[Repository.Repository],
+) -> tuple[dict[str, str], Optional[Github], Optional[Repository.Repository]]:
     github, repo, _ = setup_github_if_need(github, repo, None, config)
     tags: PaginatedList.PaginatedList = repo.get_tags()
     result: dict[str, str] = dict()
@@ -125,12 +186,14 @@ def get_mobile_vlc_kit_tags(config: Configure, github: typing.Optional[Github],
     return result, github, repo
 
 
+@log_entry
 def mkdirs(path: str):
     if not os.path.exists(path):
         mkdirs(os.path.dirname(path))
         os.mkdir(path)
 
 
+@log_entry
 def temp_do(do_func: typing.Callable[[str], bool], path: str, label: str) -> bool:
     if os.path.exists(path):
         print(f"{label} target path is exists")
@@ -144,17 +207,17 @@ def temp_do(do_func: typing.Callable[[str], bool], path: str, label: str) -> boo
             else:
                 os.unlink(temp)
         mkdirs(os.path.dirname(temp))
-        print(f'{label} will start')
+        print(f"{label} will start")
         result = do_func(temp)
-        print(f'{label} done')
+        print(f"{label} done")
     except Exception as e:
-        print(f'{label} exception {e}')
+        print(f"{label} exception {e}")
         traceback.print_exc()
     if result:
-        print(f'{label} success')
+        print(f"{label} success")
         os.rename(temp, path)
     elif os.path.exists(temp):
-        print(f'{label} fail')
+        print(f"{label} fail")
         if os.path.isdir(temp):
             shutil.rmtree(temp)
         else:
@@ -162,6 +225,7 @@ def temp_do(do_func: typing.Callable[[str], bool], path: str, label: str) -> boo
     return result
 
 
+@log_entry
 def download_file(url: str, local_filename: str):
     if os.path.exists(local_filename):
         print(f"try download {url} file exists using cache")
@@ -169,9 +233,9 @@ def download_file(url: str, local_filename: str):
 
     def _download(temp: str) -> bool:
         response = requests.get(url, stream=True)
-        t = int(response.headers.get('content-length', 0))
+        t = int(response.headers.get("content-length", 0))
         block_size = 1024 * 1024  # 1 M bit
-        with open(temp, 'wb') as file:
+        with open(temp, "wb") as file:
             for data in response.iter_content(block_size):
                 file.write(data)
         if os.path.getsize(temp) == t:
@@ -181,13 +245,17 @@ def download_file(url: str, local_filename: str):
     return temp_do(_download, local_filename, f"download {url}")
 
 
-def untar(src_file: str, dest_path: str, target_name: str, mode: str = 'r'):
+@log_entry
+def untar(src_file: str, dest_path: str, target_name: str, mode: str = "r"):
     # base_name = os.path.basename(src_file)
     def _untar(temp_path: str) -> bool:
         found = False
         with tarfile.open(src_file, mode) as input_fp:
             for member in input_fp.getmembers():
-                if member.name.endswith(target_name) or member.path.find(target_name) >= 0:
+                if (
+                    member.name.endswith(target_name)
+                    or member.path.find(target_name) >= 0
+                ):
                     mkdirs(temp_path)
                     input_fp.extract(member, temp_path)
                     found = True
@@ -198,6 +266,7 @@ def untar(src_file: str, dest_path: str, target_name: str, mode: str = 'r'):
     temp_do(_untar, dest_path, f"untar {src_file}")
 
 
+@log_entry
 def unzip(src_file: str, dest_path: str, target_name: str):
     def _unzip(temp_path: str) -> bool:
         # unzip_dir_temp = f"{unzip_dir}_temp"
@@ -218,21 +287,25 @@ def unzip(src_file: str, dest_path: str, target_name: str):
         input_fp.close()
         return found
 
-    temp_do(_unzip, dest_path, f'unzip {src_file}')
+    temp_do(_unzip, dest_path, f"unzip {src_file}")
 
 
+@log_entry
 def unxz(src_file: str, dest_path: str):
     def _unxz(temp_path: str) -> bool:
-        with lzma.open(src_file, 'rb') as input_fp:
+        with lzma.open(src_file, "rb") as input_fp:
             with open(temp_path, "wb") as output_fp:
                 shutil.copyfileobj(input_fp, output_fp)
                 return True
         return False
 
-    return temp_do(_unxz, dest_path, f'unxz {src_file}')
+    return temp_do(_unxz, dest_path, f"unxz {src_file}")
 
 
-def convert_framework_to_xcframework(framework: str, xcframework: str, configure: Configure) -> bool:
+@log_entry
+def convert_framework_to_xcframework(
+    framework: str, xcframework: str, configure: Configure
+) -> bool:
     mkdirs(xcframework)
     system_path = os.getenv("PATH")
     if len(configure.lipo_path) == 0:
@@ -254,24 +327,31 @@ def convert_framework_to_xcframework(framework: str, xcframework: str, configure
         if len(binary_archives) > 0:
             pick_architecture(binary_archives, devices_architecture, False, parts)
             pick_architecture(binary_archives, simulator_architecture, True, parts)
-            info_plist = os.path.join(xcframework, 'Info.plist')
-            architecture_parts: list[(str, list[str])] = generate_info_plist(parts, info_plist, framework_name)
+            info_plist = os.path.join(xcframework, "Info.plist")
+            architecture_parts: list[(str, list[str])] = generate_info_plist(
+                parts, info_plist, framework_name
+            )
             for part in architecture_parts:
                 name, infos = part
-                generate_frameworks(framework, os.path.join(xcframework, name), infos, full_path)
+                generate_frameworks(
+                    framework, os.path.join(xcframework, name), infos, full_path
+                )
     return False
 
 
+@log_entry
 def copy_file_or_dir(src: str, new_full: str):
-    print(f'src={src}')
+    print(f"src={src}")
     if os.path.isdir(src):
         shutil.copytree(src, new_full)
     else:
         shutil.copyfile(src, new_full)
 
 
-def generate_frameworks(framework: str, xcframework: str, architectures: list[str],
-                        lipo_path: str) -> bool:
+@log_entry
+def generate_frameworks(
+    framework: str, xcframework: str, architectures: list[str], lipo_path: str
+) -> bool:
     framework_name = os.path.basename(framework)
     framework_binary_name = os.path.splitext(framework_name)[0]
     framework_binary_path = os.path.join(framework, framework_binary_name)
@@ -282,16 +362,19 @@ def generate_frameworks(framework: str, xcframework: str, architectures: list[st
         architecture_temp_path_list: list[str] = []
         architecture_temp_path_raw_list = []
         for architecture in architectures:
-            architecture_temp_path = f'{framework_binary_path}_{architecture}'
+            architecture_temp_path = f"{framework_binary_path}_{architecture}"
             shell = Shell(
-                f'{lipo_path} -thin {architecture} "{framework_binary_path}" -output "{architecture_temp_path}"')
+                f'{lipo_path} -thin {architecture} "{framework_binary_path}" -output "{architecture_temp_path}"'
+            )
             shell.run()
             if shell.ret_code != 0:
                 return False
             architecture_temp_path_list.append(f'"{architecture_temp_path}"')
             architecture_temp_path_raw_list.append(architecture_temp_path)
         temps = " ".join(architecture_temp_path_list)
-        shell = Shell(f'{lipo_path} -create {temps} -output "{new_framework_binary_path}"')
+        shell = Shell(
+            f'{lipo_path} -create {temps} -output "{new_framework_binary_path}"'
+        )
         shell.run()
         for path in architecture_temp_path_raw_list:
             os.unlink(path)
@@ -309,8 +392,13 @@ def generate_frameworks(framework: str, xcframework: str, architectures: list[st
     return True
 
 
-def pick_architecture(exists_architecture: list[str], want_architecture: list[str], platform: bool,
-                      add_to_target: list[(list[str], bool)]) -> (list[str], bool):
+@log_entry
+def pick_architecture(
+    exists_architecture: list[str],
+    want_architecture: list[str],
+    platform: bool,
+    add_to_target: list[(list[str], bool)],
+) -> (list[str], bool):
     part: list[str] = []
     for name in want_architecture:
         if name in exists_architecture:
@@ -320,7 +408,10 @@ def pick_architecture(exists_architecture: list[str], want_architecture: list[st
     return part, platform
 
 
-def generate_info_plist(parts: list[(list[str], bool)], plist_path: str, framework_name: str) -> list[(str, list[str])]:
+@log_entry
+def generate_info_plist(
+    parts: list[(list[str], bool)], plist_path: str, framework_name: str
+) -> list[(str, list[str])]:
     result: list[(str, list[str])] = []
     available_libraries: list[str] = []
     for part, isSimulator in parts:
@@ -336,7 +427,7 @@ def generate_info_plist(parts: list[(list[str], bool)], plist_path: str, framewo
         result.append((library_identifier, part))
         part_r2: list[str] = []
         for name in part:
-            part_r2.append(f'                    <string>{name}</string>')
+            part_r2.append(f"                    <string>{name}</string>")
         supported_architectures = "\n".join(part_r2)
 
         available_librarie = f"""<dict>
@@ -373,6 +464,7 @@ def generate_info_plist(parts: list[(list[str], bool)], plist_path: str, framewo
     return result
 
 
+@log_entry
 def lipo_info(framework_path: str, lipo_path: str) -> list[str]:
     binary_archives: list[str] = []
     framework_name = os.path.splitext(os.path.basename(framework_path))[0]
@@ -386,10 +478,10 @@ def lipo_info(framework_path: str, lipo_path: str) -> list[str]:
 
         valid_architectures = ["armv7", "armv7s", "i386", "x86_64", "arm64"]
         if infos.startswith("Architectures in the fat file"):
-            key = f' are:'
+            key = f" are:"
             idx = infos.find(key)
             if idx >= 0:
-                architectures = infos[idx + len(key):]
+                architectures = infos[idx + len(key) :]
                 architectures_comp = architectures.split(" ")
                 for architecture in architectures_comp:
                     if architecture in valid_architectures:
@@ -398,12 +490,13 @@ def lipo_info(framework_path: str, lipo_path: str) -> list[str]:
             key = "is architecture:"
             idx = infos.find(key)
             if idx >= 0:
-                architecture_info = infos[idx + len(key):].strip()
+                architecture_info = infos[idx + len(key) :].strip()
                 if architecture_info in valid_architectures:
                     binary_archives.append(architecture_info)
     return binary_archives
 
 
+@log_entry
 def download_cocoapod_archive_file(url: str, temp_path: str):
     temp_path = os.path.join(temp_path, "cocoapods")
     mkdirs(temp_path)
@@ -416,7 +509,8 @@ def download_cocoapod_archive_file(url: str, temp_path: str):
         return None
 
 
-def file_tree_search_first(base_path: str, target_name: str) -> typing.Optional[str]:
+@log_entry
+def file_tree_search_first(base_path: str, target_name: str) -> Optional[str]:
     for path, dir_list, file_list in os.walk(base_path):
         for name in dir_list:
             if name == target_name:
@@ -427,9 +521,14 @@ def file_tree_search_first(base_path: str, target_name: str) -> typing.Optional[
     return None
 
 
-def convert_new_release_assets(path: str, version: str, temp_path: str, need_framewrok_convert: bool,
-                               configure: Configure) -> \
-        typing.Optional[str]:
+@log_entry
+def convert_new_release_assets(
+    path: str,
+    version: str,
+    temp_path: str,
+    need_framewrok_convert: bool,
+    configure: Configure,
+) -> Optional[str]:
     if path is None or version is None or temp_path is None:
         return None
 
@@ -446,13 +545,17 @@ def convert_new_release_assets(path: str, version: str, temp_path: str, need_fra
                 else:
                     os.unlink(rm_path)
 
-    unarchive_path = os.path.join(os.path.dirname(path), os.path.splitext(os.path.basename(path))[0])
+    unarchive_path = os.path.join(
+        os.path.dirname(path), os.path.splitext(os.path.basename(path))[0]
+    )
     if path.endswith(".tar.xz"):
         xz_dir = os.path.dirname(path)
-        unarchive_path = os.path.join(xz_dir, os.path.splitext(os.path.splitext(os.path.basename(path))[0])[0])
+        unarchive_path = os.path.join(
+            xz_dir, os.path.splitext(os.path.splitext(os.path.basename(path))[0])[0]
+        )
         if not os.path.exists(unarchive_path):
             temp_files.append(unarchive_path)
-            untar(path, unarchive_path, xcframework, 'r:xz')
+            untar(path, unarchive_path, xcframework, "r:xz")
     elif path.endswith(".zip"):
         if not os.path.exists(unarchive_path):
             temp_files.append(unarchive_path)
@@ -464,18 +567,25 @@ def convert_new_release_assets(path: str, version: str, temp_path: str, need_fra
         return None
     if need_framewrok_convert:
         mobile_vlc_kit_framework = mobile_vlc_kit_xcframework
-        mobile_vlc_kit_xcframework = f'{os.path.splitext(mobile_vlc_kit_xcframework)[0]}.xcframework'
-        convert_framework_to_xcframework(mobile_vlc_kit_framework, mobile_vlc_kit_xcframework, configure)
+        mobile_vlc_kit_xcframework = (
+            f"{os.path.splitext(mobile_vlc_kit_xcframework)[0]}.xcframework"
+        )
+        convert_framework_to_xcframework(
+            mobile_vlc_kit_framework, mobile_vlc_kit_xcframework, configure
+        )
 
     xcframework_zip_dir = os.path.join(temp_path, "xcframework-zip")
     mkdirs(xcframework_zip_dir)
-    xcframework_zip = os.path.join(xcframework_zip_dir, f"MobileVLCKit-{version}.xcframework.zip")
+    xcframework_zip = os.path.join(
+        xcframework_zip_dir, f"MobileVLCKit-{version}.xcframework.zip"
+    )
     if zip_folder(mobile_vlc_kit_xcframework, xcframework_zip):
         return xcframework_zip
     else:
         return None
 
 
+@log_entry
 def zip_folder(folder_path: str, target_zip_path: str) -> bool:
     folder_name = os.path.basename(folder_path)
 
@@ -485,7 +595,7 @@ def zip_folder(folder_path: str, target_zip_path: str) -> bool:
         for path, dir_list, file_list in os.walk(folder_path):
             sub_path = str(path)
             if sub_path.startswith(folder_path):
-                sub_path = sub_path[len(folder_path):]
+                sub_path = sub_path[len(folder_path) :]
             if sub_path.startswith("/"):
                 sub_path = sub_path[1:]
             sub_path = f"{folder_name}/{sub_path}"
@@ -493,31 +603,39 @@ def zip_folder(folder_path: str, target_zip_path: str) -> bool:
                 full_path = os.path.join(path, name)
                 zip_name_full = os.path.join(sub_path, name)
                 output_fp.write(full_path, zip_name_full)
-                print(f'path:{path} sub:{sub_path} zip:{zip_name_full}')
+                print(f"path:{path} sub:{sub_path} zip:{zip_name_full}")
             for name in file_list:
                 full_path = os.path.join(path, name)
                 zip_name_full = os.path.join(sub_path, name)
                 output_fp.write(full_path, zip_name_full)
-                print(f'path:{path} sub:{sub_path} zip:{zip_name_full}')
+                print(f"path:{path} sub:{sub_path} zip:{zip_name_full}")
 
         output_fp.close()
         return True
 
-    return temp_do(_zip, target_zip_path, f'zip {os.path.basename(target_zip_path)}')
+    return temp_do(_zip, target_zip_path, f"zip {os.path.basename(target_zip_path)}")
 
 
-def setup_github_if_need(github: typing.Optional[Github], repo: typing.Optional[Repository.Repository],
-                         release: typing.Optional[GitRelease.GitRelease], configure: Configure) -> \
-        (typing.Optional[str], typing.Optional[str], typing.Optional[Github], typing.Optional[Repository.Repository],
-         typing.Optional[GitRelease.GitRelease]):
+@log_entry
+def setup_github_if_need(
+    github: Optional[Github],
+    repo: Optional[Repository.Repository],
+    release: Optional[GitRelease.GitRelease],
+    configure: Configure,
+) -> tuple[
+    Optional[Github], Optional[Repository.Repository], Optional[GitRelease.GitRelease]
+]:
+
     if github is None:
         github = Github(configure.github_token)
     if repo is None:
-        repo = github.get_repo(f'{configure.github_owner_name}/{configure.github_repo_name}')
+        repo = github.get_repo(
+            f"{configure.github_owner_name}/{configure.github_repo_name}"
+        )
     if len(configure.github_release_id) == 0:
         if len(configure.github_release_name) == 0:
             print("github_release_id and github_release_name is null , fail")
-            return None, None, github, repo, release
+            return github, repo, release
         releases = repo.get_releases()
         for release in releases:
             if release.tag_name == configure.github_release_name:
@@ -528,11 +646,22 @@ def setup_github_if_need(github: typing.Optional[Github], repo: typing.Optional[
     return github, repo, release
 
 
-def do_convert(version: str, file_url: str, configure: Configure,
-               github: typing.Optional[Github] = None, repo: typing.Optional[Repository.Repository] = None,
-               release: typing.Optional[GitRelease.GitRelease] = None, need_framewrok_convert: bool = False) -> \
-        (typing.Optional[str], typing.Optional[str], typing.Optional[Github], typing.Optional[Repository.Repository],
-         typing.Optional[GitRelease.GitRelease]):
+@log_entry
+def do_convert(
+    version: str,
+    file_url: str,
+    configure: Configure,
+    github: Optional[Github] = None,
+    repo: Optional[Repository.Repository] = None,
+    release: Optional[GitRelease.GitRelease] = None,
+    need_framewrok_convert: bool = False,
+) -> tuple[
+    Optional[str],
+    Optional[str],
+    Optional[Github],
+    Optional[Repository.Repository],
+    Optional[GitRelease.GitRelease],
+]:
     """
     将 vlc cocoapods 地址转换为 github release url 地址
     :param need_framewrok_convert:
@@ -545,8 +674,9 @@ def do_convert(version: str, file_url: str, configure: Configure,
     :return:  url,sha256,github,release
     """
     local_path = download_cocoapod_archive_file(file_url, configure.temp_path)
-    release_path = convert_new_release_assets(local_path, version, configure.temp_path, need_framewrok_convert,
-                                              configure)
+    release_path = convert_new_release_assets(
+        local_path, version, configure.temp_path, need_framewrok_convert, configure
+    )
 
     if release_path is None:
         return None, None, github, repo, release
@@ -554,22 +684,23 @@ def do_convert(version: str, file_url: str, configure: Configure,
     github, repo, release = setup_github_if_need(github, repo, release, configure)
 
     # sha256 = sha356(release_path)
-    release_name = f'MobileVLCKit-{version}.xcframework.zip'
-    print(f'upload file to release {release_path} ->{release_name}')
+    release_name = f"MobileVLCKit-{version}.xcframework.zip"
+    print(f"upload file to release {release_path} ->{release_name}")
     asset: GitReleaseAsset = release.upload_asset(release_path, release_name)
-    print(f'calculate file sha256 {release_path}')
+    print(f"calculate file sha256 {release_path}")
     sha = file_sha256(release_path)
-    print(f'calculate file sha256 {release_path} -> {sha}')
+    print(f"calculate file sha256 {release_path} -> {sha}")
     if not configure.cache_file_keep:
         os.unlink(release_path)
     return asset.browser_download_url, sha, github, repo, release
 
 
+@log_entry
 def file_sha256(release_path: str):
     _256 = hashlib.sha256()
     current_position = 0
     last_print_position = 0
-    with open(release_path, 'rb') as fp:
+    with open(release_path, "rb") as fp:
         while True:
             block = fp.read(1024 * 1024)
             if block is None or len(block) == 0:
@@ -577,38 +708,49 @@ def file_sha256(release_path: str):
             current_position += len(block)
             _256.update(block)
             if current_position - last_print_position > 1024 * 1024 * 500:
-                print(f'calcuate sha256:{release_path} {current_position}')
+                print(f"calcuate sha256:{release_path} {current_position}")
                 last_print_position = current_position
     sha = _256.hexdigest()
     return sha
 
 
+@log_entry
 def string_sha(url: str) -> str:
     _sha256 = hashlib.sha256()
-    _sha256.update(url.encode('utf-8'))
+    _sha256.update(url.encode("utf-8"))
     return _sha256.hexdigest()
 
 
+@log_entry
 def bytes_sha(data: bytes) -> str:
     _sha256 = hashlib.sha256()
     _sha256.update(data)
     return _sha256.hexdigest()
 
 
-def add_tag(release_url: str, file_hash: str, version: str, configure: Configure, github: Github,
-            repo: Repository) -> (Github, Repository):
+@log_entry
+def add_tag(
+    release_url: str,
+    file_hash: str,
+    version: str,
+    configure: Configure,
+    github: Github,
+    repo: Repository,
+) -> tuple[Github, Repository]:
     if repo is None:
         if github is None:
             github = Github(configure.github_token)
 
-        repo = github.get_repo(f'{configure.github_owner_name}/{configure.github_repo_name}')
+        repo = github.get_repo(
+            f"{configure.github_owner_name}/{configure.github_repo_name}"
+        )
     package_swift_path = "Package.swift"
     contents = repo.get_contents(package_swift_path, ref=configure.github_branch_name)
     # modify content
     # TODO: modify content
     url_exp = re.compile(r'url\s*:\s*"https://github.com/[^"]*.zip"\s*,')
     sha_exp = re.compile(r'checksum\s*:\s*"[\w\d]*"')
-    package_swift = contents.decoded_content.decode('utf-8')
+    package_swift = contents.decoded_content.decode("utf-8")
     package_swift = url_exp.sub(f'url:"{release_url}",', package_swift)
     package_swift = sha_exp.sub(f'checksum:"{file_hash}"', package_swift)
 
@@ -618,11 +760,13 @@ def add_tag(release_url: str, file_hash: str, version: str, configure: Configure
         fp.write(package_swift_bytes)
 
     git_message = f"add {version} url:{release_url} sha256:{file_hash}"
-    update_release = repo.update_file(package_swift_path,
-                                      git_message,
-                                      package_swift,
-                                      contents.sha,
-                                      branch=configure.github_branch_name)
+    update_release = repo.update_file(
+        package_swift_path,
+        git_message,
+        package_swift,
+        contents.sha,
+        branch=configure.github_branch_name,
+    )
     # {'commit': Commit(sha="b06e05400afd6baee13fff74e38553d135dca7dc"), 'content': ContentFile(path="test.txt")}
 
     commit: github.Commit.Commit = update_release["commit"]
@@ -636,16 +780,22 @@ def add_tag(release_url: str, file_hash: str, version: str, configure: Configure
     # :rtype: :class:`github.GitTag.GitTag`
 
     print(
-        f'create tag and release tag={version},tag_message={git_message},release_name={version},'
-        f'release_message={git_message},object={commit.sha},type="commit"')
-    new_git_release: GitRelease.GitRelease = repo.create_git_tag_and_release(tag=version, tag_message=git_message,
-                                                                             release_name=version,
-                                                                             release_message=git_message,
-                                                                             object=commit.sha, type="commit")
+        f"create tag and release tag={version},tag_message={git_message},release_name={version},"
+        f'release_message={git_message},object={commit.sha},type="commit"'
+    )
+    new_git_release: GitRelease.GitRelease = repo.create_git_tag_and_release(
+        tag=version,
+        tag_message=git_message,
+        release_name=version,
+        release_message=git_message,
+        object=commit.sha,
+        type="commit",
+    )
     print(f"add tag:{new_git_release.raw_data} {new_git_release}")
     return github, repo
 
 
+@log_entry
 def cleanup_mini(configure: Configure):
     cocoapods = os.path.join(configure.temp_path, "cocoapods")
     if os.path.exists(cocoapods):
@@ -659,6 +809,7 @@ def cleanup_mini(configure: Configure):
                 os.unlink(full)
 
 
+@log_entry
 def version_to_long(version: str) -> int:
     version_long = 0
     comps = version.split(".")
@@ -667,6 +818,7 @@ def version_to_long(version: str) -> int:
     return version_long
 
 
+@log_entry
 def get_release_hash(url: str, configure: Configure) -> str:
     download_path = os.path.join(configure.temp_path, string_sha(url))
     download_file(url, download_path)
@@ -676,17 +828,23 @@ def get_release_hash(url: str, configure: Configure) -> str:
     return sha_value
 
 
+@log_entry
 def do_main():
     configure = Configure()
-    github: typing.Optional[Github] = None
-    git_release: typing.Optional[GitRelease.GitRelease] = None
-    git_repo: typing.Optional[Repository.Repository] = None
+    github: Optional[Github] = None
+    git_release: Optional[GitRelease.GitRelease] = None
+    git_repo: Optional[Repository.Repository] = None
 
-    github_file_links, github, git_repo, git_release = get_mobile_vlc_kit_releases_assets(configure, github, git_repo,
-                                                                                          git_release)
+    github_file_links, github, git_repo, git_release = (
+        get_mobile_vlc_kit_releases_assets(configure, github, git_repo, git_release)
+    )
     github_tags, github, git_repo = get_mobile_vlc_kit_tags(configure, github, git_repo)
 
-    vlc_links: dict[str, str] = get_mobile_vlc_kit_links(configure.vlc_cocoapods_prod_url)
+    print(f'github_tags=>{json.dumps(github_tags,indent='\t')}')
+
+    vlc_links: dict[str, str] = get_mobile_vlc_kit_links(
+        configure.vlc_cocoapods_prod_url
+    )
     convert_list: dict[str, str] = dict()
     for version in vlc_links.keys():
         href = vlc_links[version]
@@ -707,16 +865,28 @@ def do_main():
             release_url: str = github_file_links[version]
             file_hash: str = get_release_hash(release_url, configure)
         else:
-            release_url, file_hash, g, repo, release = do_convert(version=version, file_url=convert_list[version],
-                                                                  configure=configure, github=github, repo=git_repo,
-                                                                  release=git_release,
-                                                                  need_framewrok_convert=need_framewrok_convert)
+            release_url, file_hash, g, repo, release = do_convert(
+                version=version,
+                file_url=convert_list[version],
+                configure=configure,
+                github=github,
+                repo=git_repo,
+                release=git_release,
+                need_framewrok_convert=need_framewrok_convert,
+            )
             github = g
             git_release = release
             git_repo = repo
 
         if release_url is not None and file_hash is not None:
-            g, r = add_tag(release_url, file_hash, version, configure=configure, github=github, repo=git_repo)
+            g, r = add_tag(
+                release_url,
+                file_hash,
+                version,
+                configure=configure,
+                github=github,
+                repo=git_repo,
+            )
             github = g
             git_repo = r
         cleanup_mini(configure)
