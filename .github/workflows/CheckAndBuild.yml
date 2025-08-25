@@ -23,5 +23,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          echo "env=>$(env)"
+          echo "pwd=>$(pwd)"
+          echo "ls -lah $(ls -lah)"
           pip install requests beautifulsoup4 PyGithub
           python CocoapodConvert.py
