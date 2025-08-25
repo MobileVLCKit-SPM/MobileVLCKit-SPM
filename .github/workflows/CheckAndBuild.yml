@@ -40,4 +40,4 @@ jobs:
           ls -lah /Users/runner/work/MobileVLCKit-SPM/
           echo "================================================="
           pip install requests beautifulsoup4 PyGithub
-          python /Users/runner/work/MobileVLCKit-SPM/CocoapodConvert.py
+          python CocoapodConvert.py
