@@ -121,7 +121,7 @@ def analyse_tags_links(
     soup = BeautifulSoup(html, "html.parser")
     tags = soup.find_all("a")
     for link in tags:
-        href: str = f"{link.get("href")}"
+        href: str = f'{link.get("href")}'
         result: list = regexp.findall(href)
         if len(result) > 0:
             # full_name = result[0][0]
@@ -841,7 +841,7 @@ def do_main():
     )
     github_tags, github, git_repo = get_mobile_vlc_kit_tags(configure, github, git_repo)
 
-    print(f'github_tags=>{json.dumps(github_tags,indent='\t')}')
+    print(f"github_tags=>{json.dumps(github_tags,indent='\t')}")
 
     vlc_links: dict[str, str] = get_mobile_vlc_kit_links(
         configure.vlc_cocoapods_prod_url
