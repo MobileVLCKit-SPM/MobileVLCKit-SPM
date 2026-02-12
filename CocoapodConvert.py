@@ -73,6 +73,7 @@ class Configure:
         github_repository = os.environ.get("GITHUB_REPOSITORY")
         if github_repository:
             repo_parts = github_repository.split("/")
+
             self.github_owner_name = repo_parts[0]
             self.github_repo_name = repo_parts[1]
         else:
@@ -854,7 +855,7 @@ def do_main():
     for version in convert_list.keys():
         long_version = version_to_long(version)
         need_framewrok_convert = False
-        if long_version <= 2007009:
+        if long_version <= 3006001:
             continue
         if long_version < 3003016:
             need_framewrok_convert = True

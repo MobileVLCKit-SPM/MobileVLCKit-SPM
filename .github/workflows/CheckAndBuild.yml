@@ -4,40 +4,33 @@ on:
   push:
     branches: ["main"]
   schedule:
-    - cron: "18 18 * * *"
+    - cron: "0 0 * * *"
   workflow_dispatch:
 
 permissions:
-  packages: read
   contents: write
+  packages: read
 
 jobs:
-  query:
+  update:
     name: "Check for updates"
-    runs-on: macos-15
+    runs-on: macos-latest
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GITHUB_BRANCH: "main"
     steps:
       - name: Checkout Source
-        id: checkout
-        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # pin@v4.1.1
-      - name: "Get latest release"
-        id: query
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11' 
+
+      - name: Install dependencies
         run: |
-          echo "================================================="
-          echo "env"
-          env
-          echo "================================================="
-          echo "pwd"
-          pwd
-          echo "================================================="
-          echo "ls -lah"
-          ls -lah
-          echo "================================================="
-          echo "ls -lah /Users/runner/work/MobileVLCKit-SPM"
-          ls -lah /Users/runner/work/MobileVLCKit-SPM/
-          echo "================================================="
-          pip install requests beautifulsoup4 PyGithub
+          pip install -r requirements.txt
+
+      - name: Run Update Script
+        run: |
           python CocoapodConvert.py

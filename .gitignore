@@ -4,3 +4,5 @@ __pycache__
 temp
 configure.json
 .vscode
+update.sh
+_update_package_swift.swift
