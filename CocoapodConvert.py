@@ -18,6 +18,19 @@ from github import Github, GitRelease, GitReleaseAsset, Repository, PaginatedLis
 from Shell import Shell
 import logging
 import functools
+import inspect
+
+def DebugLineInfo(offset:int=1)->str:
+    # 获取当前堆栈信息
+    # stack[1] 代表调用者的帧 (Frame)
+    caller_frame = inspect.stack()[offset]
+    
+    # 获取行号和函数名
+    line_number = caller_frame.lineno
+    function_name = caller_frame.function
+    
+    return f"Line {line_number} in {function_name}"
+
 
 # 配置日志
 logging.basicConfig(
@@ -25,6 +38,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+def printLine():
+    logger.info(f"-->{DebugLineInfo(2)}")
 
 def log_entry(func):
     @functools.wraps(func)
@@ -228,21 +243,25 @@ def temp_do(do_func: typing.Callable[[str], bool], path: str, label: str) -> boo
 
 @log_entry
 def download_file(url: str, local_filename: str):
+    printLine()
     if os.path.exists(local_filename):
         print(f"try download {url} file exists using cache")
         return True
 
     def _download(temp: str) -> bool:
+        printLine()
         response = requests.get(url, stream=True)
         t = int(response.headers.get("content-length", 0))
         block_size = 1024 * 1024  # 1 M bit
         with open(temp, "wb") as file:
             for data in response.iter_content(block_size):
                 file.write(data)
+        printLine()
         if os.path.getsize(temp) == t:
             return True
+        printLine()
         return False
-
+    printLine()
     return temp_do(_download, local_filename, f"download {url}")
 
 
@@ -674,16 +693,17 @@ def do_convert(
     :param release:   release 对象复用
     :return:  url,sha256,github,release
     """
+    printLine()
     local_path = download_cocoapod_archive_file(file_url, configure.temp_path)
     release_path = convert_new_release_assets(
         local_path, version, configure.temp_path, need_framewrok_convert, configure
     )
-
+    printLine()
     if release_path is None:
         return None, None, github, repo, release
-
+    printLine()
     github, repo, release = setup_github_if_need(github, repo, release, configure)
-
+    printLine()
     # sha256 = sha356(release_path)
     release_name = f"MobileVLCKit-{version}.xcframework.zip"
     print(f"upload file to release {release_path} ->{release_name}")
@@ -693,6 +713,7 @@ def do_convert(
     print(f"calculate file sha256 {release_path} -> {sha}")
     if not configure.cache_file_keep:
         os.unlink(release_path)
+    print("will return on do_convert")
     return asset.browser_download_url, sha, github, repo, release
 
 
@@ -831,27 +852,31 @@ def get_release_hash(url: str, configure: Configure) -> str:
 
 @log_entry
 def do_main():
+    printLine()
     configure = Configure()
+    printLine()
     github: Optional[Github] = None
     git_release: Optional[GitRelease.GitRelease] = None
     git_repo: Optional[Repository.Repository] = None
-
+    printLine()
     github_file_links, github, git_repo, git_release = (
         get_mobile_vlc_kit_releases_assets(configure, github, git_repo, git_release)
     )
+    printLine()
     github_tags, github, git_repo = get_mobile_vlc_kit_tags(configure, github, git_repo)
-
+    printLine()
     print(f"github_tags=>{json.dumps(github_tags,indent='\t')}")
 
     vlc_links: dict[str, str] = get_mobile_vlc_kit_links(
         configure.vlc_cocoapods_prod_url
     )
+    printLine()
     convert_list: dict[str, str] = dict()
     for version in vlc_links.keys():
         href = vlc_links[version]
         if version not in github_tags:
             convert_list[version] = href
-
+    printLine()
     for version in convert_list.keys():
         long_version = version_to_long(version)
         need_framewrok_convert = False
@@ -859,7 +884,7 @@ def do_main():
             continue
         if long_version < 3003016:
             need_framewrok_convert = True
-
+        printLine()
         # release_url: str = ""
         # file_hash: str = ""
         if version in github_file_links:
@@ -878,7 +903,7 @@ def do_main():
             github = g
             git_release = release
             git_repo = repo
-
+        printLine()
         if release_url is not None and file_hash is not None:
             g, r = add_tag(
                 release_url,
@@ -890,8 +915,15 @@ def do_main():
             )
             github = g
             git_repo = r
+        printLine()
         cleanup_mini(configure)
+        printLine()
 
 
 if __name__ == "__main__":
-    do_main()
+    printLine()
+    try:
+        do_main()
+    except Exception as e:
+        logger.error(f"捕获到异常: {e}", exc_info=True)
+    printLine()
