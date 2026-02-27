@@ -20,15 +20,16 @@ import logging
 import functools
 import inspect
 
-def DebugLineInfo(offset:int=1)->str:
+
+def DebugLineInfo(offset: int = 1) -> str:
     # 获取当前堆栈信息
     # stack[1] 代表调用者的帧 (Frame)
     caller_frame = inspect.stack()[offset]
-    
+
     # 获取行号和函数名
     line_number = caller_frame.lineno
     function_name = caller_frame.function
-    
+
     return f"Line {line_number} in {function_name}"
 
 
@@ -38,8 +39,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
 def printLine():
     logger.info(f"-->{DebugLineInfo(2)}")
+
 
 def log_entry(func):
     @functools.wraps(func)
@@ -261,6 +264,7 @@ def download_file(url: str, local_filename: str):
             return True
         printLine()
         return False
+
     printLine()
     return temp_do(_download, local_filename, f"download {url}")
 
@@ -805,13 +809,11 @@ def add_tag(
         f"create tag and release tag={version},tag_message={git_message},release_name={version},"
         f'release_message={git_message},object={commit.sha},type="commit"'
     )
-    new_git_release: GitRelease.GitRelease = repo.create_git_tag_and_release(
+    new_git_release: GitRelease.GitRelease = repo.create_git_release(
         tag=version,
-        tag_message=git_message,
-        release_name=version,
-        release_message=git_message,
-        object=commit.sha,
-        type="commit",
+        name=version,
+        message=git_message,
+        target_commitish=commit.sha,
     )
     print(f"add tag:{new_git_release.raw_data} {new_git_release}")
     return github, repo
